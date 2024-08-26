@@ -1,6 +1,7 @@
 package audio
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -21,6 +22,8 @@ type Capture struct {
 	chunkIndex  int
 	transcriber *transcribe.Transcriber
 	wg          sync.WaitGroup
+	ctx         context.Context
+	cancel      context.CancelFunc
 }
 
 func NewCapture(cfg *config.Config, transcriber *transcribe.Transcriber) (*Capture, error) {
@@ -30,10 +33,13 @@ func NewCapture(cfg *config.Config, transcriber *transcribe.Transcriber) (*Captu
 	}
 
 	bufferSize := cfg.SampleRate * cfg.Channels * int(cfg.RecordInterval.Seconds())
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Capture{
 		config:      cfg,
 		buffer:      make([]int16, bufferSize),
 		transcriber: transcriber,
+		ctx:         ctx,
+		cancel:      cancel,
 	}, nil
 }
 
@@ -62,9 +68,14 @@ func (c *Capture) saveChunks() {
 	ticker := time.NewTicker(c.config.RecordInterval)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		c.saveChunk()
-		c.chunkIndex++
+	for {
+		select {
+		case <-ticker.C:
+			c.saveChunk()
+			c.chunkIndex++
+		case <-c.ctx.Done():
+			return
+		}
 	}
 }
 
@@ -114,11 +125,17 @@ func (c *Capture) saveChunk() {
 	c.wg.Add(1)
 	go func(inputFile string) {
 		defer c.wg.Done()
-		outputFile, err := c.transcriber.TranscribeFile(inputFile)
-		if err != nil {
-			fmt.Printf("Failed to transcribe %s: %v\n", inputFile, err)
+		select {
+		case <-c.ctx.Done():
+			return
+		default:
+			outputFile, err := c.transcriber.TranscribeFile(inputFile)
+			if err != nil {
+				fmt.Printf("Failed to transcribe %s: %v\n", inputFile, err)
+			} else {
+				fmt.Printf("Transcription saved to %s\n", outputFile)
+			}
 		}
-		fmt.Printf("Transcription saved to %s\n", outputFile)
 	}(filename)
 }
 
@@ -129,6 +146,7 @@ func (c *Capture) Stop() error {
 			return fmt.Errorf("failed to stop audio stream: %w", err)
 		}
 	}
+	c.cancel() // Cancel ongoing operations
 	c.wg.Wait()
 
 	return nil
@@ -141,6 +159,7 @@ func (c *Capture) Close() error {
 			return fmt.Errorf("failed to close audio stream: %w", err)
 		}
 	}
+	c.cancel() // Ensure all goroutines are cancelled
 	portaudio.Terminate()
 	return nil
 }

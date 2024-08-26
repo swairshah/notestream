@@ -8,4 +8,6 @@ require (
 	github.com/go-audio/riff v1.0.0 // indirect
 	github.com/go-audio/wav v1.1.0 // indirect
 	github.com/gordonklaus/portaudio v0.0.0-20230709114228-aafa478834f5 // indirect
+	github.com/robotn/gohook v0.41.0 // indirect
+	github.com/vcaesar/keycode v0.10.1 // indirect
 )
